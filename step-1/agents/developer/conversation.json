@@ -1,0 +1,22 @@
+[
+  {
+    "role": "system",
+    "content": "你是「开发者」智能体。职责：软件设计、代码实现思路、调试与重构建议、技术选型说明。输出时优先给出可运行或接近可运行的方案，标明语言与依赖；涉及安全、性能时单独提醒。用户描述不清时先追问约束与目标环境。"
+  },
+  {
+    "role": "user",
+    "content": "如果我想要开发一个minimax的网站，我需要这么做？"
+  },
+  {
+    "role": "assistant",
+    "content": "# 开发 MiniMax 类网站的思路\n\n你的问题比较宽泛，我先帮你梳理一下开发方向：\n\n## 🔍 需要先明确几个问题\n\n| 问题 | 选项 |\n|------|------|\n| **你想做的是什么类型的网站？** | AI 对话聊天 / AI 内容创作 / 对标 MiniMax 的完整平台 |\n| **是否需要接入 MiniMax API？** | 是（直接调用） / 否（自建模型） |\n| **你的技术储备？** | 前端为主 / 全栈 / 有 AI 部署经验 |\n| **目标用户？** | C 端用户 / B 端企业 |\n\n---\n\n## 📌 如果你只是想做一个 **AI 对话网站**（类似海螺AI）\n\n### 基础架构\n\n```\n┌─────────────────────────────────────────────┐\n│                  前端                        │\n│  React/Vue + TailwindCSS + 流式响应UI        │\n└──────────────────┬──────────────────────────┘\n                   │ HTTP/WebSocket\n┌──────────────────▼──────────────────────────┐\n│                  后端                        │\n│  Node.js/Python FastAPI + WebSocket 服务    │\n│  - 用户认证、对话管理、Token 计费            │\n└──────────────────┬──────────────────────────┘\n                   │\n┌──────────────────▼──────────────────────────┐\n│              AI 模型层                       │\n│  MiniMax API / OpenAI API / 自部署模型      │\n└─────────────────────────────────────────────┘\n```\n\n### 核心技术要点\n\n1. **流式输出（SSE）** - 核心体验，必须支持\n2. **多轮对话上下文** - 维护 conversation history\n3. **用户鉴权** - 注册登录、API Key 管理\n4. **响应式 UI** - 移动端适配\n\n---\n\n## 🎯 你更倾向于哪个方向？\n\n1. **快速上线** → 前后端 + MiniMax API\n2. **完全自建** → 需要 GPU 资源部署模型\n3. **仅前端学习** → 调用官方 API 做 Demo\n\n请告诉我你的**具体需求**，我给你详细的代码实现方案和项目结构 👇"
+  },
+  {
+    "role": "user",
+    "content": "你的回答太多了，我想要简洁的回答。想了解"
+  },
+  {
+    "role": "assistant",
+    "content": "# 开发 AI 网站的简洁步骤\n\n## 1. 确定方向\n\n- **快速做 AI 对话网站** → 用 MiniMax API（推荐新手）\n- **自建 AI 能力** → 部署开源模型（需要 GPU，成本高）\n\n---\n\n## 2. 最小可行方案（3 步）\n\n```\n前端 (React/Vue)  →  后端 (Node/FastAPI)  →  MiniMax API\n```\n\n| 步骤 | 工具 |\n|------|------|\n| 前端 | React + TailwindCSS |\n| 后端 | Node.js / Python FastAPI |\n| AI 接口 | [MiniMax API](https://www.minimaxi.com/) |\n\n---\n\n## 3. 核心代码示例\n\n**前端调用（简化）：**\n\n```javascript\n// 调用 MiniMax API\nconst response = await fetch('https://api.minimax.chat/v1/text/chatcompletion_v2', {\n  method: 'POST',\n  headers: {\n    'Authorization': 'Bearer YOUR_API_KEY',\n    'Content-Type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'MiniMax-Text-01',\n    messages: [{ role: 'user', content: '你好' }]\n  })\n});\n```\n\n---\n\n## 4. 关键能力\n\n- ✅ **流式输出**（SSE）→ 用户体验核心\n- ✅ **对话上下文** → 发送完整历史消息\n- ✅ **WebSocket** → 实时通信\n\n---\n\n**下一步？** 告诉我你选哪个方向，我直接给你完整可运行的代码。"
+  }
+]

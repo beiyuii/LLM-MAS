@@ -1,0 +1,14 @@
+# Conda 环境：在 step-1 目录下执行
+#   conda env create -f environment.yml
+#   conda activate llm-mas-step1
+# 更新依赖后同步环境：
+#   conda env update -f environment.yml --prune
+name: llm-mas-step1
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10,<3.14
+  - pip
+  - pip:
+      - anthropic>=0.40.0
