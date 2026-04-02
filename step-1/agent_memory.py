@@ -64,7 +64,7 @@ def write_system_prompt_md(agent_id: str, content: str) -> None:
     path.write_text(content.strip() + "\n", encoding="utf-8")
 
 
-def load_messages(agent_id: str) -> List[Dict[str, str]]:
+def load_messages(agent_id: str) -> List[Dict[str, Any]]:
     """
     组装会话 messages：system 以 system_prompt.md 为准，user/assistant 来自 conversation.json。
 
@@ -72,10 +72,10 @@ def load_messages(agent_id: str) -> List[Dict[str, str]]:
         agent_id: Agent 标识
 
     Returns:
-        OpenAI 风格的 messages 列表（首条为 system）
+        messages 列表（首条为 system）；content 可为 str 或 Anthropic 内容块 list（工具调用后）
     """
     system_text = read_system_prompt_md(agent_id)
-    base: List[Dict[str, str]] = [{"role": "system", "content": system_text}]
+    base: List[Dict[str, Any]] = [{"role": "system", "content": system_text}]
 
     conv_path = get_agent_dir(agent_id) / "conversation.json"
     if not conv_path.is_file():
@@ -85,27 +85,29 @@ def load_messages(agent_id: str) -> List[Dict[str, str]]:
     if not isinstance(raw, list):
         return base
 
-    tail: List[Dict[str, str]] = []
+    tail: List[Dict[str, Any]] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
         role = item.get("role")
         content = item.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
         if role in ("user", "assistant"):
-            tail.append({"role": role, "content": content})
+            # 兼容旧版：仅字符串；新版：list 表示多段 content（含 tool_use / tool_result）
+            if isinstance(content, (str, list)):
+                tail.append({"role": role, "content": content})
+            else:
+                tail.append({"role": role, "content": str(content)})
 
     return base + tail
 
 
-def save_messages(agent_id: str, messages: List[Dict[str, str]]) -> None:
+def save_messages(agent_id: str, messages: List[Dict[str, Any]]) -> None:
     """
     将当前 messages 完整序列化写入 conversation.json（含 system）。
 
     Args:
         agent_id: Agent 标识
-        messages: 完整消息列表
+        messages: 完整消息列表（content 可为 str 或 list）
     """
     agent_dir = get_agent_dir(agent_id)
     agent_dir.mkdir(parents=True, exist_ok=True)

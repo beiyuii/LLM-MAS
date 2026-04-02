@@ -18,5 +18,13 @@
   {
     "role": "assistant",
     "content": "# 开发 AI 网站的简洁步骤\n\n## 1. 确定方向\n\n- **快速做 AI 对话网站** → 用 MiniMax API（推荐新手）\n- **自建 AI 能力** → 部署开源模型（需要 GPU，成本高）\n\n---\n\n## 2. 最小可行方案（3 步）\n\n```\n前端 (React/Vue)  →  后端 (Node/FastAPI)  →  MiniMax API\n```\n\n| 步骤 | 工具 |\n|------|------|\n| 前端 | React + TailwindCSS |\n| 后端 | Node.js / Python FastAPI |\n| AI 接口 | [MiniMax API](https://www.minimaxi.com/) |\n\n---\n\n## 3. 核心代码示例\n\n**前端调用（简化）：**\n\n```javascript\n// 调用 MiniMax API\nconst response = await fetch('https://api.minimax.chat/v1/text/chatcompletion_v2', {\n  method: 'POST',\n  headers: {\n    'Authorization': 'Bearer YOUR_API_KEY',\n    'Content-Type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'MiniMax-Text-01',\n    messages: [{ role: 'user', content: '你好' }]\n  })\n});\n```\n\n---\n\n## 4. 关键能力\n\n- ✅ **流式输出**（SSE）→ 用户体验核心\n- ✅ **对话上下文** → 发送完整历史消息\n- ✅ **WebSocket** → 实时通信\n\n---\n\n**下一步？** 告诉我你选哪个方向，我直接给你完整可运行的代码。"
+  },
+  {
+    "role": "user",
+    "content": "上次说的什么"
+  },
+  {
+    "role": "assistant",
+    "content": "这是我们第一次对话，没有“上次”。\n\n---\n\n**简要回顾刚才的内容：**\n\n开发 AI 网站 → 3 步走：\n\n1. **前端**（React）+ **后端**（Node/FastAPI）+ **MiniMax API**\n2. 核心是**流式输出**和**对话上下文**\n3. 直接调用 MiniMax API 最快，自建模型成本高\n\n---\n\n**想深入哪块？**\n\n- A. 给完整项目代码\n- B. 只做前端 Demo\n- C. 其他问题"
   }
 ]

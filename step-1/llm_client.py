@@ -1,15 +1,25 @@
 """
 使用 Anthropic 兼容协议调用 MiniMax API（非 OpenAI 兼容）。
 支持按 Agent 目录持久化 system_prompt.md 与 conversation.json。
+支持 Anthropic Tool Use：时间查询、读取文件。
+环境变量优先从与本文件同目录的 .env 加载（不覆盖已存在的环境变量）。
 """
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import anthropic
+from anthropic.types import TextBlock, ToolUseBlock
+from dotenv import load_dotenv
 
 import agent_memory
+import llm_tools
+
+# 在读取 os.getenv 之前加载与本文件同目录的 .env（不覆盖已存在的环境变量）
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # MiniMax Anthropic 兼容网关地址，可通过环境变量覆盖
 MINIMAX_ANTHROPIC_BASE_URL: str = os.getenv(
@@ -39,8 +49,8 @@ AGENT_DISPLAY_NAMES: Dict[str, str] = {
 # 当前绑定的 Agent；None 表示未初始化（不应在终端模式下出现）
 current_agent_id: Optional[str] = None
 
-# 对话历史：OpenAI 风格；由 init_agent / switch_agent 加载
-messages: List[Dict[str, str]] = []
+# 对话历史：system 为 str；user/assistant 的 content 可为 str 或 Anthropic 内容块 list（工具调用）
+messages: List[Dict[str, Any]] = []
 
 
 def init_agent(agent_id: str) -> None:
@@ -75,9 +85,9 @@ def persist_agent_state() -> None:
         agent_memory.save_messages(current_agent_id, messages)
 
 
-def split_system_and_dialog(openai_style_messages: List[Dict[str, str]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+def split_system_and_dialog(openai_style_messages: List[Dict[str, Any]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     """
-    将 OpenAI 风格消息拆分为 Anthropic 的 system 与 messages。
+    将内部消息拆分为 Anthropic 的 system 与 messages（支持字符串或多段 content）。
 
     Args:
         openai_style_messages: 含 system/user/assistant 的消息列表
@@ -89,11 +99,19 @@ def split_system_and_dialog(openai_style_messages: List[Dict[str, str]]) -> Tupl
     dialog: List[Dict[str, Any]] = []
     for item in openai_style_messages:
         role = item.get("role")
-        content = item.get("content", "")
+        content = item.get("content")
         if role == "system":
-            system_parts.append(content)
+            if isinstance(content, str):
+                system_parts.append(content)
+            else:
+                system_parts.append(str(content))
         elif role in ("user", "assistant"):
-            dialog.append({"role": role, "content": content})
+            dialog.append(
+                {
+                    "role": role,
+                    "content": llm_tools.normalize_message_content_for_api(content),
+                }
+            )
     system_text: Optional[str] = "\n\n".join(system_parts) if system_parts else None
     return system_text, dialog
 
@@ -110,21 +128,88 @@ def extract_text_from_message(message: anthropic.types.Message) -> str:
     """
     parts: List[str] = []
     for block in message.content:
-        if getattr(block, "type", None) == "text":
+        if isinstance(block, TextBlock):
             parts.append(block.text)
+        elif getattr(block, "type", None) == "text":
+            parts.append(getattr(block, "text", "") or "")
     return "".join(parts)
+
+
+def run_chat_turn_with_tools(model: str) -> str:
+    """
+    在已追加本轮 user 文本消息后，循环请求模型直至得到最终文本（含多轮 tool_use）。
+
+    Args:
+        model: MiniMax 模型名
+
+    Returns:
+        最后一轮助手可见文本（纯文本块拼接）
+    """
+    max_tool_rounds = 16
+    final_text = ""
+    for _ in range(max_tool_rounds):
+        system_text, anthropic_messages = split_system_and_dialog(messages)
+        kwargs: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "messages": anthropic_messages,
+            "tools": llm_tools.TOOL_DEFINITIONS,
+        }
+        if system_text:
+            kwargs["system"] = system_text
+
+        response = client.messages.create(**kwargs)
+        has_tool_use = any(isinstance(b, ToolUseBlock) for b in response.content)
+
+        if has_tool_use:
+            ass_content = llm_tools.content_blocks_to_serializable(response.content)
+            messages.append({"role": "assistant", "content": ass_content})
+
+            tool_result_blocks: List[Dict[str, Any]] = []
+            for block in response.content:
+                if not isinstance(block, ToolUseBlock):
+                    continue
+                tool_name = getattr(block, "name", "") or ""
+                tool_id = getattr(block, "id", "") or ""
+                tool_input = getattr(block, "input", None) or {}
+                print(f"[工具] {tool_name} 已触发 | 参数: {json.dumps(tool_input, ensure_ascii=False)}")
+                result_str = llm_tools.execute_tool(tool_name, tool_input)
+                tool_result_blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": result_str,
+                    }
+                )
+
+            if not tool_result_blocks:
+                if messages and messages[-1].get("role") == "assistant":
+                    messages.pop()
+                raise RuntimeError("模型返回 tool_use 但未包含可执行的工具块，请重试或检查模型是否兼容 Tool Use")
+
+            messages.append({"role": "user", "content": tool_result_blocks})
+            persist_agent_state()
+            continue
+
+        final_text = extract_text_from_message(response)
+        messages.append({"role": "assistant", "content": final_text})
+        persist_agent_state()
+        return final_text
+
+    raise RuntimeError("工具调用轮数超过上限，请简化请求或检查模型是否支持 Tool Use")
 
 
 def chat(new_user_message: str, model: str = "MiniMax-M2.7") -> str:
     """
-    发送用户消息并获取 AI 回复。
+    发送用户消息并获取 AI 回复（启用 Tool Use 时可能多轮请求）。
 
     Args:
         new_user_message: 用户的新消息
         model: MiniMax 模型名（Anthropic 兼容路径下使用，如 MiniMax-M2.7）
 
     Returns:
-        AI 的回复内容
+        AI 的回复内容（最终轮文本）
     """
     if not MINIMAX_API_KEY:
         raise ValueError("请设置环境变量 MINIMAX_API_KEY")
@@ -136,35 +221,30 @@ def chat(new_user_message: str, model: str = "MiniMax-M2.7") -> str:
         }
     )
 
-    system_text, anthropic_messages = split_system_and_dialog(messages)
-
-    kwargs: Dict[str, Any] = {
-        "model": model,
-        "max_tokens": 1000,
-        "temperature": 0.7,
-        "messages": anthropic_messages,
-    }
-    if system_text:
-        kwargs["system"] = system_text
-
-    response = client.messages.create(**kwargs)
-
-    assistant_message = extract_text_from_message(response)
-
-    messages.append(
-        {
-            "role": "assistant",
-            "content": assistant_message,
-        }
-    )
-
-    persist_agent_state()
-    return assistant_message
+    return run_chat_turn_with_tools(model)
 
 
-def get_messages() -> List[Dict[str, str]]:
+def get_messages() -> List[Dict[str, Any]]:
     """获取当前对话历史。"""
     return messages
+
+
+def print_slash_help() -> None:
+    """在终端打印斜杠指令说明与内置工具列表。"""
+    print("【斜杠指令】")
+    print("  / 或 /tools   — 显示本帮助与可用工具")
+    print("  /help         — 同上")
+    print("  /clear        — 清空对话（保留 system）")
+    print("  /agent <id>   — 切换 researcher / developer / writer")
+    print("  xgsys         — 修改 system（见启动说明）")
+    print("")
+    print("【内置工具】(Anthropic Tool Use)")
+    for spec in llm_tools.TOOL_DEFINITIONS:
+        name = spec.get("name", "")
+        desc = spec.get("description", "").strip().replace("\n", " ")
+        if len(desc) > 120:
+            desc = desc[:117] + "..."
+        print(f"  • {name}: {desc}")
 
 
 def clear_messages() -> None:
@@ -216,11 +296,11 @@ def run_terminal_chat(model: str = "MiniMax-M2.7", agent_id: str = "researcher")
     init_agent(agent_id)
     label = AGENT_DISPLAY_NAMES.get(agent_id, agent_id)
 
-    print("=== MiniMax 终端对话（Anthropic 兼容）===")
+    print("=== MiniMax 终端对话（Anthropic 兼容 + Tool Use）===")
     print(f"当前 Agent: {agent_id}（{label}）| 数据目录: agents/{agent_id}/")
-    print("输入内容后回车发送；quit / exit / q / bye 结束；/clear 清空对话；")
-    print("/agent researcher|developer|writer 切换角色并自动保存当前会话；")
-    print("xgsys <新提示词> 修改 system（会写入 system_prompt.md）；单独 xgsys 下一行输入。")
+    print("输入内容后回车发送；quit / exit / q / bye 结束；输入 / 或 /tools 查看工具列表；")
+    print("/clear 清空对话；/agent researcher|developer|writer 切换角色；")
+    print("xgsys <新提示词> 修改 system（会写入 system_prompt.md）；模型触发工具时会显示 [工具] 行。")
     print("-" * 48)
 
     while True:
@@ -245,6 +325,10 @@ def run_terminal_chat(model: str = "MiniMax-M2.7", agent_id: str = "researcher")
         if lowered in ("/clear", "/reset"):
             clear_messages()
             print("[系统] 已清空对话历史（保留 system 提示）。")
+            continue
+
+        if lowered in ("/", "/tools", "/help"):
+            print_slash_help()
             continue
 
         if lowered.startswith("/agent"):
