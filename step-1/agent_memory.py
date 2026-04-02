@@ -1,17 +1,17 @@
 """
-按 Agent 目录读写 system_prompt.md（soul）与 conversation.json（messages 序列化）。
+按 Agent 目录读写 system_prompt.md（可选同步）、conversation.json（messages 序列化）。
+人设优先来自 config.yaml 的 persona。
 """
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List
 
-# 与 agents/ 下子目录名一致
-VALID_AGENT_IDS: Set[str] = frozenset({"researcher", "developer", "writer"})
+import agent_config
 
 # step-1 目录下的 agents 根路径
 AGENTS_ROOT: Path = Path(__file__).resolve().parent / "agents"
 
-# 当 system_prompt.md 为空时的占位文案
+# 当人设为空时的占位文案
 DEFAULT_SYSTEM_FALLBACK: str = "你是一个 helpful 的 AI 助手。"
 
 
@@ -20,7 +20,7 @@ def get_agent_dir(agent_id: str) -> Path:
     返回某个 Agent 的数据目录路径。
 
     Args:
-        agent_id: researcher / developer / writer
+        agent_id: 目录名（须已存在 config.yaml）
 
     Returns:
         目录 Path
@@ -28,14 +28,13 @@ def get_agent_dir(agent_id: str) -> Path:
     Raises:
         ValueError: 非法 agent_id
     """
-    if agent_id not in VALID_AGENT_IDS:
-        raise ValueError(f"未知 agent_id: {agent_id}，可选: {sorted(VALID_AGENT_IDS)}")
+    agent_config.validate_agent_id(agent_id)
     return AGENTS_ROOT / agent_id
 
 
 def read_system_prompt_md(agent_id: str) -> str:
     """
-    读取 agents/<id>/system_prompt.md 全文作为 soul。
+    读取 agents/<id>/system_prompt.md 全文（config 无人设时的回退）。
 
     Args:
         agent_id: Agent 标识
@@ -50,9 +49,28 @@ def read_system_prompt_md(agent_id: str) -> str:
     return text if text else DEFAULT_SYSTEM_FALLBACK
 
 
+def get_system_prompt_text(agent_id: str) -> str:
+    """
+    获取用于 system 的人设文本：优先 config.yaml 的 persona，否则 system_prompt.md。
+
+    Args:
+        agent_id: Agent 标识
+
+    Returns:
+        system 字符串
+    """
+    try:
+        cfg = agent_config.load_agent_config(agent_id)
+        if cfg.persona.strip():
+            return cfg.persona.strip()
+    except (OSError, ValueError, FileNotFoundError):
+        pass
+    return read_system_prompt_md(agent_id)
+
+
 def write_system_prompt_md(agent_id: str, content: str) -> None:
     """
-    将 system 写回 system_prompt.md。
+    将 system 写回 system_prompt.md（与 config 人设同步时一并写入）。
 
     Args:
         agent_id: Agent 标识
@@ -66,7 +84,7 @@ def write_system_prompt_md(agent_id: str, content: str) -> None:
 
 def load_messages(agent_id: str) -> List[Dict[str, Any]]:
     """
-    组装会话 messages：system 以 system_prompt.md 为准，user/assistant 来自 conversation.json。
+    组装会话 messages：system 以人设为准，user/assistant 来自 conversation.json。
 
     Args:
         agent_id: Agent 标识
@@ -74,7 +92,7 @@ def load_messages(agent_id: str) -> List[Dict[str, Any]]:
     Returns:
         messages 列表（首条为 system）；content 可为 str 或 Anthropic 内容块 list（工具调用后）
     """
-    system_text = read_system_prompt_md(agent_id)
+    system_text = get_system_prompt_text(agent_id)
     base: List[Dict[str, Any]] = [{"role": "system", "content": system_text}]
 
     conv_path = get_agent_dir(agent_id) / "conversation.json"
@@ -92,7 +110,6 @@ def load_messages(agent_id: str) -> List[Dict[str, Any]]:
         role = item.get("role")
         content = item.get("content", "")
         if role in ("user", "assistant"):
-            # 兼容旧版：仅字符串；新版：list 表示多段 content（含 tool_use / tool_result）
             if isinstance(content, (str, list)):
                 tail.append({"role": role, "content": content})
             else:

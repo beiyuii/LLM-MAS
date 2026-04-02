@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 4. 运行中可用 `/agent developer` 等切换角色（会自动保存当前会话）。
 
-更多指令见运行时的终端提示（如 `/clear`、`xgsys` 修改 system 等）。
+更多指令见运行时的终端提示（如 `/clear`）；人设与模型请在各 Agent 的 `config.yaml` 中修改。
 
 ## 目录结构（节选）
 
