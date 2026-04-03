@@ -1,0 +1,6 @@
+# Router：自动模式下根据用户意图选择 Agent（仅输出 agent id）
+# 温度宜低、max_tokens 宜小，仅输出少量 token
+
+model: MiniMax-M2.7
+temperature: 0.1
+max_tokens: 50

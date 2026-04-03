@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 import agent_config
 import agent_memory
 import llm_tools
+import router as router_module
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -197,13 +198,16 @@ def get_messages() -> List[Dict[str, Any]]:
     return messages
 
 
-def print_slash_help() -> None:
+def print_slash_help(chat_mode: str = "specified") -> None:
     """打印斜杠指令与当前 Agent 可用工具。"""
     print("【斜杠指令】")
     print("  / 或 /tools   — 本帮助")
     print("  /agents       — 列出所有已配置的 Agent")
     print("  /clear        — 清空对话（保留人设）")
-    print("  /agent <id>   — 切换 Agent")
+    if chat_mode == "specified":
+        print("  /agent <id>   — 切换 Agent")
+    else:
+        print("  （自动模式下不可用）/agent — 请改用 --mode specified 以手动指定 Agent")
     print("  new agent     — 交互式新建 Agent（目录名、显示名、描述、人设）")
     print("")
     if current_agent_config:
@@ -278,24 +282,30 @@ def run_new_agent_wizard() -> None:
         print(f"[系统] {err}")
 
 
-def run_terminal_chat(agent_id: str) -> None:
+def run_terminal_chat(agent_id: str, mode: str = "specified") -> None:
     """
     终端多轮对话。
 
     Args:
-        agent_id: 启动时加载的 Agent 目录名
+        agent_id: 启动时加载的 Agent 目录名（自动模式下仅作首屏占位，首轮起由 Router 分配）
+        mode: specified=固定或 /agent 切换；auto=每轮由 Router 根据用户输入选择 Agent
     """
     if not MINIMAX_API_KEY:
         print("错误：请设置环境变量 MINIMAX_API_KEY 或在 .env 中配置。", file=sys.stderr)
         sys.exit(1)
 
+    router_cfg = router_module.load_router_config()
     init_agent(agent_id)
     assert current_agent_config is not None
     cfg = current_agent_config
 
-    print("=== MiniMax 终端对话（config.yaml + Tool Use）===")
+    print("=== MiniMax 终端对话（config.yaml + Tool Use + Router）===")
+    if mode == "auto":
+        print(f"模式: 自动 — 每轮由 Router 选择 Agent（router.yaml: T={router_cfg.temperature}, max_tokens={router_cfg.max_tokens}）")
+    else:
+        print("模式: 指定 — 使用当前 Agent，可用 /agent 切换")
     print(f"当前 Agent: {cfg.name}（{cfg.display_name}）| 配置: agents/{cfg.name}/config.yaml")
-    print("输入 / 或 /tools 查看帮助与当前工具；/agents 列出全部 Agent；new agent 新建角色；")
+    print("输入 / 或 /tools 查看帮助；/agents 列出全部 Agent；new agent 新建角色；")
     print("人设请在 agents/<id>/config.yaml 中编辑 persona；模型触发工具时会打印 [工具] 行。")
     print("-" * 48)
 
@@ -324,7 +334,14 @@ def run_terminal_chat(agent_id: str) -> None:
             continue
 
         if lowered in ("/", "/tools", "/help"):
-            print_slash_help()
+            print_slash_help(mode)
+            continue
+
+        if mode == "auto" and lowered.startswith("/agent"):
+            print(
+                "[系统] 自动模式下每轮由 Router 分配 Agent，不能使用 /agent。"
+                " 若需手动指定，请使用: python llm_client.py --mode specified --agent <id>"
+            )
             continue
 
         if lowered == "/agents" or lowered == "/list":
@@ -360,8 +377,21 @@ def run_terminal_chat(agent_id: str) -> None:
             continue
 
         try:
+            if mode == "auto":
+                try:
+                    chosen = router_module.route_user_message(user_line, client, router_cfg)
+                except Exception as rexc:
+                    print(f"[Router] 调用失败，使用当前 Agent: {rexc}", file=sys.stderr)
+                    chosen = current_agent_id or agent_id
+                if chosen != current_agent_id:
+                    switch_agent(chosen)
+                # 自动模式：无论是否切换，都打印 Router 选型，便于对照
+                nl = current_agent_config.display_name if current_agent_config else chosen
+                print(f"[Router] 本轮 Agent: {chosen}（{nl}）")
             reply = chat(user_line)
-            print(f"\n助手: {reply}")
+            if current_agent_config:
+                print(f"\n[执行 Agent] {current_agent_config.name} · {current_agent_config.display_name}")
+            print(f"助手: {reply}")
         except Exception as exc:
             print(f"\n请求失败: {exc}", file=sys.stderr)
             if messages and messages[-1].get("role") == "user":
@@ -376,17 +406,23 @@ def parse_args() -> argparse.Namespace:
         print("错误：agents/ 下未找到任何 config.yaml。", file=sys.stderr)
         sys.exit(1)
     default_agent = "researcher" if "researcher" in discovered else discovered[0]
-    parser = argparse.ArgumentParser(description="MiniMax Anthropic 兼容终端对话（YAML 配置 Agent）")
+    parser = argparse.ArgumentParser(description="MiniMax Anthropic 兼容终端对话（YAML 配置 Agent + Router）")
+    parser.add_argument(
+        "--mode",
+        choices=["specified", "auto"],
+        default="specified",
+        help="specified=手动指定/切换 Agent；auto=每轮由 Router 根据输入自动选择 Agent",
+    )
     parser.add_argument(
         "--agent",
         "-a",
         default=default_agent,
         choices=sorted(discovered),
-        help="启动时使用的 Agent（目录名，对应 agents/<id>/config.yaml）",
+        help="启动时加载的 Agent；自动模式下仅作首屏占位，首轮对话起由 Router 分配",
     )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run_terminal_chat(agent_id=args.agent)
+    run_terminal_chat(agent_id=args.agent, mode=args.mode)
